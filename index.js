@@ -153,8 +153,13 @@ if (infile) {
         let temp = []
         let endFlag = false
         if (I) {
-            const transform = Transform({
+            const transform = new Transform({
                 transform(chunk, encoding, callback) {
+                    if (readLen + chunk.length < S) {
+                        readLen += chunk.length
+                        callback()
+                        return
+                    }
                     let arr = Array.from(chunk)
                     temp = arr.reduce((s, v) => {
                         if ((L === undefined || L !== undefined && readLen2 < L) && (!S || S && readLen >= S)) {
@@ -181,7 +186,8 @@ if (infile) {
                         str = str.slice(0, -2)
                         this.push(str + '\n')
                         if (readLen >= L) {
-                            transform.push(`};\nunsigned int ${infile.replace(/\./, '_')}_len = ${readLen2};\n`)
+                            transform.push(`};\nunsigned int ${path.basename(path.resolve(infile)).replace(/\W/g, '_')}_len = ${readLen2};\n`)
+                            transform.destroy();
                             endFlag = true
                         } else {
                             temp = []
@@ -210,11 +216,13 @@ if (infile) {
             })
             const rs = createReadStream(path.resolve(infile));
             transform.on('pipe', () => {
-                transform.push(`unsigned char ${infile.replace(/\./, '_')}[] = {\n`)
+                transform.push(`unsigned char ${path.basename(path.resolve(infile)).replace(/\W/g, '_')}[] = {\n`)
             })
             rs.on('end', () => {
-                if (!endFlag)
-                    transform.push(`};\nunsigned int ${infile.replace(/\./, '_')}_len = ${size - S};\n`)
+                if (!endFlag) {
+                    transform.push(`};\nunsigned int ${path.basename(path.resolve(infile)).replace(/\W/g, '_')}_len = ${size - S};\n`)
+                    transform.destroy()
+                }
             })
             if (!outFlag)
                 rs.pipe(transform).pipe(process.stdout)
@@ -222,8 +230,13 @@ if (infile) {
                 rs.pipe(transform).pipe(fs.createWriteStream(path.resolve(outfile)))
         }
         else {
-            const transform = Transform({
+            const transform = new Transform({
                 transform(chunk, encoding, callback) {
+                    if (readLen + chunk.length < S) {
+                        readLen += chunk.length
+                        callback()
+                        return
+                    }
                     let arr = Array.from(chunk)
                     temp = arr.reduce((s, v) => {
                         if ((L === undefined || L !== undefined && readLen2 < L) && (!S || S && readLen >= S)) {
@@ -251,7 +264,8 @@ if (infile) {
                         this.push(str + '\n')
                         if (readLen >= L) {
                             endFlag = true
-                            transform.push(`];\n\/\/Hint: You can use [Array.length] method to get the length\nconst ${infile.replace(/\./, '_')}_len = ${readLen2};\n`)
+                            transform.push(`];\n\/\/Hint: You can use [Array.length] method to get the length\nconst ${infile.replace(/\W/g, '_')}_len = ${readLen2};\n`)
+                            transform.destroy();
                         } else {
                             temp = []
                         }
@@ -279,11 +293,13 @@ if (infile) {
             })
             const rs = createReadStream(path.resolve(infile));
             transform.on('pipe', () => {
-                transform.push(`const ${infile.replace(/\./, '_')} = [\n`)
+                transform.push(`const ${path.basename(path.resolve(infile)).replace(/\W/g, '_')} = [\n`)
             })
             rs.on('end', () => {
-                if (!endFlag)
-                    transform.push(`];\n\/\/Hint: You can use [Array.length] method to get the length\nconst ${infile.replace(/\./, '_')}_len = ${readLen2};\n`)
+                if (!endFlag) {
+                    transform.push(`];\n\/\/Hint: You can use [Array.length] method to get the length\nconst ${path.basename(path.resolve(infile)).replace(/\W/g, '_')}_len = ${readLen2};\n`)
+                    transform.destroy();
+                }
             })
             if (!outFlag)
                 rs.pipe(transform).pipe(process.stdout)
@@ -300,8 +316,13 @@ if (infile) {
             console.log()
         }
         let temp = []
-        const transform = Transform({
+        const transform = new Transform({
             transform(chunk, encoding, callback) {
+                if (readLen + chunk.length < S) {
+                    readLen += chunk.length
+                    callback()
+                    return
+                }
                 let arr = Array.from(chunk)
                 temp = arr.reduce((s, v) => {
                     if ((L === undefined || L !== undefined && readLen2 < L) && (!S || S && readLen >= S)) {
@@ -329,7 +350,7 @@ if (infile) {
                         this.push(str + '\n')
                     }
                     if (readLen >= L) {
-                        process.exit(0)
+                        this.destroy()
                     } else {
                         temp = []
                     }
@@ -361,11 +382,14 @@ if (infile) {
         else
             rs.pipe(transform).pipe(fs.createWriteStream(path.resolve(outfile)))
     }
-
     else {
-        const transform = Transform({
-            highWaterMark: C,
+        const transform = new Transform({
             transform(chunk, encoding, callback) {
+                if (readLen + chunk.length < S) {
+                    readLen += chunk.length
+                    callback()
+                    return
+                }
                 let arr = Array.from(chunk)
                 arr.reduce((s, v) => {
                     if ((L === undefined || L !== undefined && readLen2 < L) && (!S || S && readLen >= S)) {
@@ -433,6 +457,9 @@ if (infile) {
                             }
                         }
                         this.push(str + '\n')
+                        if (sum + C >= L) {
+                            this.destroy()
+                        }
                         break
                     } else {
                         const t = temp.slice(0, C)
@@ -472,6 +499,7 @@ if (infile) {
                     }
 
                 }
+                callback()
             },
         })
         const rs = createReadStream(path.resolve(infile));
@@ -482,8 +510,10 @@ if (infile) {
     }
 
 } else {
+    //Console
     let temp = []
     let readLen = 0
+    let readLen2 = 0
     let sum = 0
     let offset = 0
     if (O) {
@@ -505,7 +535,7 @@ if (infile) {
         }
 
         let temp = []
-        const transform = Transform({
+        const transform = new new Transform({
             transform(chunk, encoding, callback) {
                 let arr = Array.from(chunk)
                 //avoid windows 0x0d \r
@@ -572,15 +602,17 @@ if (infile) {
             console.log()
         }
         let temp = []
-        const transform = Transform({
+        const transform = new Transform({
             transform(chunk, encoding, callback) {
                 let arr = Array.from(chunk)
                 if (arr.slice(-2)[0] === 0x0d) {
                     arr.splice(-2, 1)
                 }
                 temp = arr.reduce((s, v) => {
-                    if ((L === undefined || L !== undefined && readLen < L) && (!S || S && readLen >= S))
+                    if ((L === undefined || L !== undefined && readLen2 < L) && (!S || S && readLen >= S)) {
                         s.push(v)
+                        readLen2++
+                    }
                     readLen++
                     return s
                 }, temp)
@@ -630,15 +662,17 @@ if (infile) {
         })
         process.stdin.pipe(transform).pipe(process.stdout)
     } else {
-        const transform = Transform({
+        const transform = new Transform({
             transform(chunk, encoding, callback) {
                 let arr = Array.from(chunk)
                 if (arr.slice(-2)[0] === 0x0d) {
                     arr.splice(-2, 1)
                 }
                 arr.reduce((s, v) => {
-                    if ((L === undefined || L !== undefined && readLen < L) && (!S || S && readLen >= S))
+                    if ((L === undefined || L !== undefined && readLen2 < L) && (!S || S && readLen >= S)) {
                         s.push(v)
+                        readLen2++
+                    }
                     readLen++
                     return s
                 }, temp)
