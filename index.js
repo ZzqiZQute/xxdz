@@ -17,14 +17,26 @@ program.version('0.0.1')
     .option('-j', 'output in JS array style.')
     .option('-l <len>', 'stop after <len> octets.', parseInt)
     .option('-o <off>', 'add <off> to the displayed file position.', parseInt)
+    .option('-s <seek>', 'start at <seek> bytes', parseInt)
+    .option('-u', 'use uppercase to show.')
     .action((i, o) => {
         infile = i
         outfile = o
         if (i) {
             const inpath = path.resolve(i)
             if (!fs.existsSync(inpath)) {
-                console.log(`xxdez: ${infile}: No such file`)
+                console.error(`xxdz: ${infile}: No such file`)
                 process.exit(1)
+            }
+            else {
+                const fd = fs.openSync(inpath)
+                if (fs.fstatSync(fd).isDirectory()) {
+                    console.error(`xxdz: ${infile}: Is a directory`)
+                    fs.closeSync(fd)
+                    process.exit(1)
+                }
+                fs.closeSync(fd)
+
             }
         }
     })
@@ -44,12 +56,16 @@ if (program.J) {
     J = program.J
 }
 if (I && J) {
-    console.log("Cannot output C and JS format code at the same time!")
+    console.error("xxdz: Cannot output C and JS format code at the same time")
     process.exit(1)
 }
 let L
-if (program.L) {
+if (program.L !== undefined) {
     L = program.L
+}
+if (L !== undefined && L <= 0) {
+    console.error("xxdz: Length must be greater than 0")
+    process.exit(1)
 }
 let O
 if (program.O) {
@@ -70,11 +86,399 @@ if (I || J) {
 if (program.C) {
     C = program.C
 }
+let U
+if (program.U) {
+    U = program.U
+}
+let S = 0
+if (program.S) {
+    S = program.S
+}
+if (S < 0 && !infile) {
+    console.error('xxdz: Cannot seek minus bytes in the console.')
+    process.exit(1)
+}
+const printf = (U, format, ...args) => {
+    return PRINTJ.sprintf(U ? format.toUpperCase() : format, args)
+}
 if (infile) {
+    let outFlag = false
     if (outfile) {
         const outpath = path.resolve(outfile)
-    } else {
+        if (fs.existsSync(outpath)) {
+            if (fs.statSync(outpath).isDirectory()) {
+                console.error(`xxdz: ${outpath}: Is a directory`)
+                process.exit(1)
+            }
+        }
+        outFlag = true
+    }
+    let temp = []
+    let readLen = 0
+    let readLen2 = 0
+    let sum = 0
+    let offset = 0
+    if (O) {
+        offset += O
+    }
+    const fd = fs.openSync(path.resolve(infile))
+    const size = fs.fstatSync(fd).size
+    if (S < 0) {
+        const tempS = S
+        S += size
+        if (S < 0) {
+            fs.closeSync(fd)
+            console.error(`xxdz: Cannot seek before the head, size = ${size}, seek = ${tempS}`)
+            process.exit(1)
+        }
+    }
+    else if (S >= size) {
+        fs.closeSync(fd)
+        process.exit(0)
+    }
+    fs.closeSync(fd)
+    if (I || J) {
+        if (P) {
+            console.warn('warning, option -p is ignored')
+            console.log()
+        }
+        if (O) {
+            console.warn('warning, option -o is ignored')
+            console.log()
+        }
+        if (gFlag) {
+            console.warn('warning, option -g is ignored')
+            console.log()
+        }
+        let temp = []
+        let endFlag = false
+        if (I) {
+            const transform = Transform({
+                transform(chunk, encoding, callback) {
+                    let arr = Array.from(chunk)
+                    temp = arr.reduce((s, v) => {
+                        if ((L === undefined || L !== undefined && readLen2 < L) && (!S || S && readLen >= S)) {
+                            s.push(v)
+                            readLen2++
+                        }
+                        readLen++
+                        return s
+                    }, temp)
+                    if (L) {
+                        while (temp.length > C) {
+                            let tmp = temp.slice(0, C)
+                            temp = temp.slice(C)
+                            const str = '  ' + tmp.reduce((s, v) => {
+                                s += printf(U, "0x%02x, ", v)
+                                return s
+                            }, '')
+                            this.push(str + '\n')
+                        }
+                        let str = '  ' + temp.reduce((s, v) => {
+                            s += printf(U, "0x%02x, ", v)
+                            return s
+                        }, '')
+                        str = str.slice(0, -2)
+                        this.push(str + '\n')
+                        if (readLen >= L) {
+                            transform.push(`};\nunsigned int ${infile.replace(/\./, '_')}_len = ${readLen2};\n`)
+                            endFlag = true
+                        } else {
+                            temp = []
+                        }
+                    } else {
+                        while (temp.length > C) {
+                            let tmp = temp.slice(0, C)
+                            temp = temp.slice(C)
+                            const str = '  ' + tmp.reduce((s, v) => {
+                                s += printf(U, "0x%02x, ", v)
+                                return s
+                            }, '')
+                            this.push(str + '\n')
+                        }
+                        let str = '  ' + temp.reduce((s, v) => {
+                            s += printf(U, "0x%02x, ", v)
+                            return s
+                        }, '')
+                        temp = []
+                        str = str.slice(0, -2)
+                        this.push(str + '\n')
+                    }
+                    callback()
 
+                }
+            })
+            const rs = createReadStream(path.resolve(infile));
+            transform.on('pipe', () => {
+                transform.push(`unsigned char ${infile.replace(/\./, '_')}[] = {\n`)
+            })
+            rs.on('end', () => {
+                if (!endFlag)
+                    transform.push(`};\nunsigned int ${infile.replace(/\./, '_')}_len = ${size - S};\n`)
+            })
+            if (!outFlag)
+                rs.pipe(transform).pipe(process.stdout)
+            else
+                rs.pipe(transform).pipe(fs.createWriteStream(path.resolve(outfile)))
+        }
+        else {
+            const transform = Transform({
+                transform(chunk, encoding, callback) {
+                    let arr = Array.from(chunk)
+                    temp = arr.reduce((s, v) => {
+                        if ((L === undefined || L !== undefined && readLen2 < L) && (!S || S && readLen >= S)) {
+                            s.push(v)
+                            readLen2++
+                        }
+                        readLen++
+                        return s
+                    }, temp)
+                    if (L) {
+                        while (temp.length > C) {
+                            let tmp = temp.slice(0, C)
+                            temp = temp.slice(C)
+                            const str = '  ' + tmp.reduce((s, v) => {
+                                s += printf(U, "0x%02x, ", v)
+                                return s
+                            }, '')
+                            this.push(str + '\n')
+                        }
+                        let str = '  ' + temp.reduce((s, v) => {
+                            s += printf(U, "0x%02x, ", v)
+                            return s
+                        }, '')
+                        str = str.slice(0, -2)
+                        this.push(str + '\n')
+                        if (readLen >= L) {
+                            endFlag = true
+                            transform.push(`];\n\/\/Hint: You can use [Array.length] method to get the length\nconst ${infile.replace(/\./, '_')}_len = ${readLen2};\n`)
+                        } else {
+                            temp = []
+                        }
+                    } else {
+                        while (temp.length > C) {
+                            let tmp = temp.slice(0, C)
+                            temp = temp.slice(C)
+                            const str = '  ' + tmp.reduce((s, v) => {
+                                s += printf(U, "0x%02x, ", v)
+                                return s
+                            }, '')
+                            this.push(str + '\n')
+                        }
+                        let str = '  ' + temp.reduce((s, v) => {
+                            s += printf(U, "0x%02x, ", v)
+                            return s
+                        }, '')
+                        temp = []
+                        str = str.slice(0, -2)
+                        this.push(str + '\n')
+                    }
+                    callback()
+
+                }
+            })
+            const rs = createReadStream(path.resolve(infile));
+            transform.on('pipe', () => {
+                transform.push(`const ${infile.replace(/\./, '_')} = [\n`)
+            })
+            rs.on('end', () => {
+                if (!endFlag)
+                    transform.push(`];\n\/\/Hint: You can use [Array.length] method to get the length\nconst ${infile.replace(/\./, '_')}_len = ${readLen2};\n`)
+            })
+            if (!outFlag)
+                rs.pipe(transform).pipe(process.stdout)
+            else
+                rs.pipe(transform).pipe(fs.createWriteStream(path.resolve(outfile)))
+        }
+    } else if (P) {
+        if (O) {
+            console.warn('warning, option -o is ignored')
+            console.log()
+        }
+        if (gFlag) {
+            console.warn('warning, option -g is ignored')
+            console.log()
+        }
+        let temp = []
+        const transform = Transform({
+            transform(chunk, encoding, callback) {
+                let arr = Array.from(chunk)
+                temp = arr.reduce((s, v) => {
+                    if ((L === undefined || L !== undefined && readLen2 < L) && (!S || S && readLen >= S)) {
+                        s.push(v)
+                        readLen2++
+                    }
+                    readLen++
+                    return s
+                }, temp)
+                if (L) {
+                    while (temp.length >= C) {
+                        let tmp = temp.slice(0, C)
+                        temp = temp.slice(C)
+                        const str = tmp.reduce((s, v) => {
+                            s += printf(U, "%02x", v)
+                            return s
+                        }, '')
+                        this.push(str + '\n')
+                    }
+                    if (temp.length > 0) {
+                        const str = temp.reduce((s, v) => {
+                            s += printf(U, "%02x", v)
+                            return s
+                        }, '')
+                        this.push(str + '\n')
+                    }
+                    if (readLen >= L) {
+                        process.exit(0)
+                    } else {
+                        temp = []
+                    }
+                } else {
+                    while (temp.length >= C) {
+                        let tmp = temp.slice(0, C)
+                        temp = temp.slice(C)
+                        const str = tmp.reduce((s, v) => {
+                            s += printf(U, "%02x", v)
+                            return s
+                        }, '')
+                        this.push(str + '\n')
+                    }
+                    if (temp.length > 0) {
+                        const str = temp.reduce((s, v) => {
+                            s += printf(U, "%02x", v)
+                            return s
+                        }, '')
+                        this.push(str + '\n')
+                    }
+                    temp = []
+                }
+                callback()
+            }
+        })
+        const rs = createReadStream(path.resolve(infile));
+        if (!outFlag)
+            rs.pipe(transform).pipe(process.stdout)
+        else
+            rs.pipe(transform).pipe(fs.createWriteStream(path.resolve(outfile)))
+    }
+
+    else {
+        const transform = Transform({
+            highWaterMark: C,
+            transform(chunk, encoding, callback) {
+                let arr = Array.from(chunk)
+                arr.reduce((s, v) => {
+                    if ((L === undefined || L !== undefined && readLen2 < L) && (!S || S && readLen >= S)) {
+                        s.push(v)
+                        readLen2++
+                    }
+                    readLen++
+                    return s
+                }, temp)
+
+                while (true) {
+                    flag = false
+                    if (L) {
+                        if (sum + temp.length >= L) {
+                            if (temp.length <= C) {
+                                flag = true
+                            }
+                        }
+                        else if (temp.length < C) {
+                            flag = true
+                        }
+                    } else {
+                        if (temp.length <= C) {
+                            flag = true
+                        }
+                    }
+                    if (flag) {
+                        const t = temp
+                        let str = printf(U, "%08x", offset + sum + S)
+                        str += ': '
+                        if (C < G) {
+                            for (let j = 0; j < C; j++) {
+                                str += printf(U, "%02x", t[j])
+                            }
+                        } else {
+                            const gr = Math.floor(C / G)
+                            for (let i = 0; i < gr; i++) {
+                                for (let j = 0; j < G; j++) {
+                                    if (i * G + j < t.length)
+                                        str += printf(U, "%02x", t[i * G + j])
+                                    else
+                                        str += '  '
+                                }
+                                str += ' '
+                            }
+
+                            for (let i = gr * G; i < C; i++) {
+                                if (i < t.length)
+                                    str += printf(U, "%02x", t[i])
+                                else
+                                    str += '  '
+                            }
+                            if (gr * G < C)
+                                str += ' '
+
+                        }
+                        str += ' '
+                        for (let i = 0; i < C; i++) {
+                            if (i < t.length) {
+                                if (t[i] < 0x20 || t[i] > 0x7e) {
+                                    str += '.'
+                                } else {
+                                    str += String.fromCharCode(t[i])
+                                }
+                            }
+                        }
+                        this.push(str + '\n')
+                        break
+                    } else {
+                        const t = temp.slice(0, C)
+                        temp = temp.slice(C)
+                        let str = printf(U, "%08x", offset + sum + S)
+                        str += ': '
+                        if (C < G) {
+                            for (let j = 0; j < C; j++) {
+                                str += printf(U, "%02x", t[j])
+                            }
+                        } else {
+                            const gr = Math.floor(C / G)
+                            for (let i = 0; i < gr; i++) {
+                                for (let j = 0; j < G; j++) {
+                                    str += printf(U, "%02x", t[i * G + j])
+                                }
+                                str += ' '
+                            }
+                            for (let i = gr * G; i < C; i++) {
+                                str += printf(U, "%02x", t[i])
+                            }
+                            if (gr * G < C)
+                                str += ' '
+                        }
+                        str += ' '
+                        for (let i = 0; i < C; i++) {
+                            if (i < t.length) {
+                                if (t[i] < 0x20 || t[i] > 0x7e) {
+                                    str += '.'
+                                } else {
+                                    str += String.fromCharCode(t[i])
+                                }
+                            }
+                        }
+                        this.push(str + '\n')
+                        sum += C
+                    }
+
+                }
+            },
+        })
+        const rs = createReadStream(path.resolve(infile));
+        if (!outFlag)
+            rs.pipe(transform).pipe(process.stdout)
+        else
+            rs.pipe(transform).pipe(fs.createWriteStream(path.resolve(outfile)))
     }
 
 } else {
@@ -89,24 +493,27 @@ if (infile) {
         //In console ,they are the same
         if (P) {
             console.warn('warning, option -p is ignored')
-
+            console.log()
         }
         if (O) {
             console.warn('warning, option -o is ignored')
+            console.log()
         }
         if (gFlag) {
             console.warn('warning, option -g is ignored')
+            console.log()
         }
 
         let temp = []
         const transform = Transform({
             transform(chunk, encoding, callback) {
                 let arr = Array.from(chunk)
+                //avoid windows 0x0d \r
                 if (arr.slice(-2)[0] === 0x0d) {
                     arr.splice(-2, 1)
                 }
                 temp = arr.reduce((s, v) => {
-                    if (!L || L && readLen < L)
+                    if ((L === undefined || L !== undefined && readLen < L) && (!S || S && readLen >= S))
                         s.push(v)
                     readLen++
                     return s
@@ -116,17 +523,17 @@ if (infile) {
                         let tmp = temp.slice(0, C)
                         temp = temp.slice(C)
                         const str = tmp.reduce((s, v) => {
-                            s += PRINTJ.sprintf("0x%02x, ", v)
+                            s += printf(U, "0x%02x, ", v)
                             return s
                         }, '')
-                        console.log(str)
+                        this.push(str + '\n')
                     }
                     let str = temp.reduce((s, v) => {
-                        s += PRINTJ.sprintf("0x%02x, ", v)
+                        s += printf(U, "0x%02x, ", v)
                         return s
                     }, '')
-                    str=str.slice(0,-2)
-                    console.log(str)
+                    str = str.slice(0, -2)
+                    this.push(str + '\n')
                     if (readLen >= L) {
                         process.exit(0)
                     } else {
@@ -137,18 +544,18 @@ if (infile) {
                         let tmp = temp.slice(0, C)
                         temp = temp.slice(C)
                         const str = tmp.reduce((s, v) => {
-                            s += PRINTJ.sprintf("0x%02x, ", v)
+                            s += printf(U, "0x%02x, ", v)
                             return s
                         }, '')
-                        console.log(str)
+                        this.push(str + '\n')
                     }
                     let str = temp.reduce((s, v) => {
-                        s += PRINTJ.sprintf("0x%02x, ", v)
+                        s += printf(U, "0x%02x, ", v)
                         return s
                     }, '')
                     temp = []
-                    str=str.slice(0,-2)
-                    console.log(str)
+                    str = str.slice(0, -2)
+                    this.push(str + '\n')
                 }
                 callback()
             }
@@ -158,9 +565,11 @@ if (infile) {
     else if (P) {
         if (O) {
             console.warn('warning, option -o is ignored')
+            console.log()
         }
         if (gFlag) {
             console.warn('warning, option -g is ignored')
+            console.log()
         }
         let temp = []
         const transform = Transform({
@@ -170,7 +579,7 @@ if (infile) {
                     arr.splice(-2, 1)
                 }
                 temp = arr.reduce((s, v) => {
-                    if (!L || L && readLen < L)
+                    if ((L === undefined || L !== undefined && readLen < L) && (!S || S && readLen >= S))
                         s.push(v)
                     readLen++
                     return s
@@ -180,16 +589,18 @@ if (infile) {
                         let tmp = temp.slice(0, C)
                         temp = temp.slice(C)
                         const str = tmp.reduce((s, v) => {
-                            s += PRINTJ.sprintf("%02x", v)
+                            s += printf(U, "%02x", v)
                             return s
                         }, '')
-                        console.log(str)
+                        this.push(str + '\n')
                     }
-                    const str = temp.reduce((s, v) => {
-                        s += PRINTJ.sprintf("%02x", v)
-                        return s
-                    }, '')
-                    console.log(str)
+                    if (temp.length > 0) {
+                        const str = temp.reduce((s, v) => {
+                            s += printf(U, "%02x", v)
+                            return s
+                        }, '')
+                        this.push(str + '\n')
+                    }
                     if (readLen >= L) {
                         process.exit(0)
                     } else {
@@ -200,17 +611,19 @@ if (infile) {
                         let tmp = temp.slice(0, C)
                         temp = temp.slice(C)
                         const str = tmp.reduce((s, v) => {
-                            s += PRINTJ.sprintf("%02x", v)
+                            s += printf(U, "%02x", v)
                             return s
                         }, '')
-                        console.log(str)
+                        this.push(str + '\n')
                     }
-                    const str = temp.reduce((s, v) => {
-                        s += PRINTJ.sprintf("%02x", v)
-                        return s
-                    }, '')
+                    if (temp.length > 0) {
+                        const str = temp.reduce((s, v) => {
+                            s += printf(U, "%02x", v)
+                            return s
+                        }, '')
+                        this.push(str + '\n')
+                    }
                     temp = []
-                    console.log(str)
                 }
                 callback()
             }
@@ -224,7 +637,7 @@ if (infile) {
                     arr.splice(-2, 1)
                 }
                 arr.reduce((s, v) => {
-                    if (!L || L && readLen < L)
+                    if ((L === undefined || L !== undefined && readLen < L) && (!S || S && readLen >= S))
                         s.push(v)
                     readLen++
                     return s
@@ -233,7 +646,7 @@ if (infile) {
                     flag = false
                     if (L) {
                         if (sum + temp.length >= L) {
-                            if (temp.length < C) {
+                            if (temp.length <= C) {
                                 flag = true
                             }
                         }
@@ -241,24 +654,24 @@ if (infile) {
                             break
                         }
                     } else {
-                        if (temp.length < C) {
+                        if (temp.length <= C) {
                             break
                         }
                     }
                     if (flag) {
                         const t = temp
-                        let str = PRINTJ.sprintf("%08x", offset + sum)
+                        let str = printf(U, "%08x", offset + sum + S)
                         str += ': '
                         if (C < G) {
                             for (let j = 0; j < C; j++) {
-                                str += PRINTJ.sprintf("%02x", t[j])
+                                str += printf(U, "%02x", t[j])
                             }
                         } else {
                             const gr = Math.floor(C / G)
                             for (let i = 0; i < gr; i++) {
                                 for (let j = 0; j < G; j++) {
                                     if (i * G + j < t.length)
-                                        str += PRINTJ.sprintf("%02x", t[i * G + j])
+                                        str += printf(U, "%02x", t[i * G + j])
                                     else
                                         str += '  '
                                 }
@@ -266,53 +679,61 @@ if (infile) {
                             }
                             for (let i = gr * G; i < C; i++) {
                                 if (i < t.length)
-                                    str += PRINTJ.sprintf("%02x", t[i])
+                                    str += printf(U, "%02x", t[i])
                                 else
                                     str += '  '
                             }
+                            if (gr * G < C)
+                                str += ' '
                         }
                         str += ' '
                         for (let i = 0; i < C; i++) {
-                            if (t[i] < 0x20 || t[i] > 0x7e) {
-                                str += '.'
-                            } else {
-                                str += String.fromCharCode(t[i])
+                            if (i < t.length) {
+                                if (t[i] < 0x20 || t[i] > 0x7e) {
+                                    str += '.'
+                                } else {
+                                    str += String.fromCharCode(t[i])
+                                }
                             }
                         }
-                        console.log(str)
+                        this.push(str + '\n')
                         process.exit(0)
                     } else {
                         const t = temp.slice(0, C)
                         temp = temp.slice(C)
-                        let str = PRINTJ.sprintf("%08x", offset + sum)
+                        let str = printf(U, "%08x", offset + sum + S)
                         str += ': '
                         if (C < G) {
                             for (let j = 0; j < C; j++) {
-                                str += PRINTJ.sprintf("%02x", t[j])
+                                str += printf(U, "%02x", t[j])
                             }
                         } else {
                             const gr = Math.floor(C / G)
                             for (let i = 0; i < gr; i++) {
                                 for (let j = 0; j < G; j++) {
-                                    str += PRINTJ.sprintf("%02x", t[i * G + j])
+                                    str += printf(U, "%02x", t[i * G + j])
                                 }
                                 str += ' '
                             }
                             for (let i = gr * G; i < C; i++) {
-                                str += PRINTJ.sprintf("%02x", t[i])
+                                str += printf(U, "%02x", t[i])
                             }
+                            if (gr * G < C)
+                                str += ' '
                         }
 
                         str += ' '
 
                         for (let i = 0; i < C; i++) {
-                            if (t[i] < 0x20 || t[i] > 0x7e) {
-                                str += '.'
-                            } else {
-                                str += String.fromCharCode(t[i])
+                            if (i < t.length) {
+                                if (t[i] < 0x20 || t[i] > 0x7e) {
+                                    str += '.'
+                                } else {
+                                    str += String.fromCharCode(t[i])
+                                }
                             }
                         }
-                        console.log(str)
+                        this.push(str + '\n')
                         sum += C
                     }
                     if (temp.length <= 0) {
@@ -325,98 +746,3 @@ if (infile) {
         process.stdin.pipe(transform).pipe(process.stdout)
     }
 }
-// if (argv.length == 2) {
-//     let temp = []
-//     let sum = 0
-//     const transform = Transform({
-//         transform(chunk, encoding, callback) {
-//             let arr = Array.from(chunk)
-//             if (arr.slice(-2)[0] === 0x0d) {
-//                 arr.splice(-2, 1)
-//             }
-//             arr.reduce((s, v) => {
-//                 s.push(v);
-//                 return s;
-//             }, temp)
-//             while (temp.length > 16) {
-//                 const t = temp.slice(0, 16)
-//                 temp = temp.slice(16)
-//                 let str = PRINTJ.sprintf("%08x", sum)
-//                 str += ': '
-//                 for (let i = 0; i < 8; i++) {
-//                     str += PRINTJ.sprintf("%02x%02x ", t[i * 2], t[i * 2 + 1])
-//                 }
-//                 str += ' '
-//                 for (let i = 0; i < 16; i++) {
-//                     if (t[i] < 0x20 || t[i] > 0x7e) {
-//                         str += '.'
-//                     } else {
-//                         str += String.fromCharCode(t[i])
-//                     }
-//                 }
-//                 console.log(str)
-//                 sum += 16
-//             }
-//             callback()
-//         }
-//     })
-//     process.stdin.pipe(transform).pipe(process.stdout)
-// } else if (argv.length == 3) {
-//     let temp = []
-//     let sum = 0
-//     const transform = Transform({
-//         transform(chunk, encoding, callback) {
-//             let arr = Array.from(chunk)
-//             if (arr.slice(-2)[0] === 0x0d) {
-//                 arr.splice(-2, 1)
-//             }
-//             arr.reduce((s, v) => {
-//                 s.push(v);
-//                 return s;
-//             }, temp)
-//             while (temp.length > 16) {
-//                 const t = temp.slice(0, 16)
-//                 temp = temp.slice(16)
-//                 let str = PRINTJ.sprintf("%08x", sum)
-//                 str += ': '
-//                 for (let i = 0; i < 8; i++) {
-//                     str += PRINTJ.sprintf("%02x%02x ", t[i * 2], t[i * 2 + 1])
-//                 }
-//                 str += ' '
-//                 for (let i = 0; i < 16; i++) {
-//                     if (t[i] < 0x20 || t[i] > 0x7e) {
-//                         str += '.'
-//                     } else {
-//                         str += String.fromCharCode(t[i])
-//                     }
-//                 }
-//                 console.log(str)
-//                 sum += 16
-//             }
-//             let str = PRINTJ.sprintf("%08x", sum)
-//             str += ': '
-//             const m = Math.floor(temp.length / 2)
-//             const n = temp.length % 2
-//             for (let i = 0; i < m; i++) {
-//                 str += PRINTJ.sprintf("%02x%02x ", temp[i * 2], temp[i * 2 + 1])
-//             }
-//             if (n) {
-//                 str += PRINTJ.sprintf("%02x", temp[temp.length - 1])
-//             }
-//             str += ' '.repeat(42 - 6 * m) + (n ? '  ' : '') + ' '
-//             for (let i = 0; i < temp.length; i++) {
-//                 if (temp[i] < 0x20 || temp[i] > 0x7e) {
-//                     str += '.'
-//                 } else {
-//                     str += String.fromCharCode(temp[i])
-//                 }
-//             }
-//             console.log(str)
-//             callback()
-//         }
-//     })
-//     createReadStream(path.resolve(argv[2])).pipe(transform).pipe(process.stdout)
-
-// } else {
-//     console.log("")
-// }

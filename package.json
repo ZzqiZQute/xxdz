@@ -9,6 +9,5 @@
   },
   "bin":"./index.js",
   "scripts": {
-    "start": "node --harmony . --help"
   }
 }
