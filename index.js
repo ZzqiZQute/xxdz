@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 const { Transform } = require('stream')
 const PRINTJ = require('printj')
 const fs = require('fs')
@@ -98,7 +99,7 @@ if (S < 0 && !infile) {
     console.error('xxdz: Cannot seek minus bytes in the console.')
     process.exit(1)
 }
-const printf = (U, format, ...args) => {
+const printf = (U, format, args) => {
     return PRINTJ.sprintf(U ? format.toUpperCase() : format, args)
 }
 if (infile) {
@@ -535,16 +536,19 @@ if (infile) {
         }
 
         let temp = []
-        const transform = new new Transform({
+        const transform = new Transform({
             transform(chunk, encoding, callback) {
-                let arr = Array.from(chunk)
-                //avoid windows 0x0d \r
-                if (arr.slice(-2)[0] === 0x0d) {
-                    arr.splice(-2, 1)
+                if (readLen + chunk.length < S) {
+                    readLen += chunk.length
+                    callback()
+                    return
                 }
+                let arr = Array.from(chunk)
                 temp = arr.reduce((s, v) => {
-                    if ((L === undefined || L !== undefined && readLen < L) && (!S || S && readLen >= S))
+                    if ((L === undefined || L !== undefined && readLen2 < L) && (!S || S && readLen >= S)) {
                         s.push(v)
+                        readLen2++
+                    }
                     readLen++
                     return s
                 }, temp)
@@ -565,7 +569,7 @@ if (infile) {
                     str = str.slice(0, -2)
                     this.push(str + '\n')
                     if (readLen >= L) {
-                        process.exit(0)
+                        this.destroy()
                     } else {
                         temp = []
                     }
@@ -604,10 +608,12 @@ if (infile) {
         let temp = []
         const transform = new Transform({
             transform(chunk, encoding, callback) {
-                let arr = Array.from(chunk)
-                if (arr.slice(-2)[0] === 0x0d) {
-                    arr.splice(-2, 1)
+                if (readLen + chunk.length < S) {
+                    readLen += chunk.length
+                    callback()
+                    return
                 }
+                let arr = Array.from(chunk)
                 temp = arr.reduce((s, v) => {
                     if ((L === undefined || L !== undefined && readLen2 < L) && (!S || S && readLen >= S)) {
                         s.push(v)
@@ -634,7 +640,8 @@ if (infile) {
                         this.push(str + '\n')
                     }
                     if (readLen >= L) {
-                        process.exit(0)
+                        this.destroy()
+                        break
                     } else {
                         temp = []
                     }
@@ -664,10 +671,12 @@ if (infile) {
     } else {
         const transform = new Transform({
             transform(chunk, encoding, callback) {
-                let arr = Array.from(chunk)
-                if (arr.slice(-2)[0] === 0x0d) {
-                    arr.splice(-2, 1)
+                if (readLen + chunk.length < S) {
+                    readLen += chunk.length
+                    callback()
+                    return
                 }
+                let arr = Array.from(chunk)
                 arr.reduce((s, v) => {
                     if ((L === undefined || L !== undefined && readLen2 < L) && (!S || S && readLen >= S)) {
                         s.push(v)
@@ -731,7 +740,8 @@ if (infile) {
                             }
                         }
                         this.push(str + '\n')
-                        process.exit(0)
+                        this.destroy()
+                        break;
                     } else {
                         const t = temp.slice(0, C)
                         temp = temp.slice(C)
@@ -739,36 +749,36 @@ if (infile) {
                         str += ': '
                         if (C < G) {
                             for (let j = 0; j < C; j++) {
-                                str += printf(U, "%02x", t[j])
+                                str = str + printf(U, "%02x", t[j])
                             }
                         } else {
                             const gr = Math.floor(C / G)
                             for (let i = 0; i < gr; i++) {
                                 for (let j = 0; j < G; j++) {
-                                    str += printf(U, "%02x", t[i * G + j])
+                                    str = str + printf(U, "%02x", t[i * G + j])
                                 }
-                                str += ' '
+                                str = str + ' '
                             }
                             for (let i = gr * G; i < C; i++) {
-                                str += printf(U, "%02x", t[i])
+                                str = str + printf(U, "%02x", t[i])
                             }
                             if (gr * G < C)
-                                str += ' '
+                                str = str + ' '
                         }
 
-                        str += ' '
+                        str = str + ' '
 
                         for (let i = 0; i < C; i++) {
                             if (i < t.length) {
                                 if (t[i] < 0x20 || t[i] > 0x7e) {
-                                    str += '.'
+                                    str = str + '.'
                                 } else {
-                                    str += String.fromCharCode(t[i])
+                                    str = str + String.fromCharCode(t[i])
                                 }
                             }
                         }
                         this.push(str + '\n')
-                        sum += C
+                        sum = sum + C
                     }
                     if (temp.length <= 0) {
                         break
@@ -776,6 +786,47 @@ if (infile) {
                 }
                 callback()
             }
+        })
+        process.stdin.on('end', () => {
+            const t = temp
+            let str = printf(U, "%08x", offset + sum + S)
+            str += ': '
+            if (C < G) {
+                for (let j = 0; j < C; j++) {
+                    str += printf(U, "%02x", t[j])
+                }
+            } else {
+                const gr = Math.floor(C / G)
+                for (let i = 0; i < gr; i++) {
+                    for (let j = 0; j < G; j++) {
+                        if (i * G + j < t.length)
+                            str += printf(U, "%02x", t[i * G + j])
+                        else
+                            str += '  '
+                    }
+                    str += ' '
+                }
+                for (let i = gr * G; i < C; i++) {
+                    if (i < t.length)
+                        str += printf(U, "%02x", t[i])
+                    else
+                        str += '  '
+                }
+                if (gr * G < C)
+                    str += ' '
+            }
+            str += ' '
+            for (let i = 0; i < C; i++) {
+                if (i < t.length) {
+                    if (t[i] < 0x20 || t[i] > 0x7e) {
+                        str += '.'
+                    } else {
+                        str += String.fromCharCode(t[i])
+                    }
+                }
+            }
+            transform.push(str + '\n')
+            transform.destroy()
         })
         process.stdin.pipe(transform).pipe(process.stdout)
     }
