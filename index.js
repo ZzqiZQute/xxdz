@@ -7,11 +7,11 @@ const program = require('commander')
 let infile
 let outfile
 program.version('0.0.1')
-    .name('xxdez')
+    .name('xxdz')
     .description('a very simple application that makes a hexdump.')
     .arguments('[infile [outfile]]')
     .option('-c <cols>', 'format <cols> octets per line. Default 16 (-i 12, -j 12, -ps 30).', parseInt)
-    .option('-ps', 'output in postscript plain hexdump style octets perline.')
+    .option('-p', 'output in postscript plain hexdump style octets perline.')
     .option('-g <group>', 'number of octets per group in normal output. Default 2.', parseInt)
     .option('-i', 'output in C include file style.')
     .option('-j', 'output in JS array style.')
@@ -30,9 +30,9 @@ program.version('0.0.1')
     })
 program.parse(process.argv)
 
-let Ps
-if (program.Ps) {
-    Ps = program.Ps
+let P
+if (program.P) {
+    P = program.P
 }
 
 let I
@@ -56,18 +56,26 @@ if (program.O) {
     O = program.O
 }
 let G = 2
+let gFlag = false
 if (program.G) {
     G = program.G
+    gFlag = true
 }
 let C = 16
 if (I || J) {
     C = 12
+} else if (P) {
+    C = 30
 }
 if (program.C) {
     C = program.C
 }
 if (infile) {
-    const outpath=path.resolve(outfile)
+    if (outfile) {
+        const outpath = path.resolve(outfile)
+    } else {
+
+    }
 
 } else {
     let temp = []
@@ -78,14 +86,136 @@ if (infile) {
         offset += O
     }
     if (I || J) {
-        if (I) {
-
-        } else {
+        //In console ,they are the same
+        if (P) {
+            console.warn('warning, option -p is ignored')
 
         }
-    }
-    else if (Ps) {
+        if (O) {
+            console.warn('warning, option -o is ignored')
+        }
+        if (gFlag) {
+            console.warn('warning, option -g is ignored')
+        }
 
+        let temp = []
+        const transform = Transform({
+            transform(chunk, encoding, callback) {
+                let arr = Array.from(chunk)
+                if (arr.slice(-2)[0] === 0x0d) {
+                    arr.splice(-2, 1)
+                }
+                temp = arr.reduce((s, v) => {
+                    if (!L || L && readLen < L)
+                        s.push(v)
+                    readLen++
+                    return s
+                }, temp)
+                if (L) {
+                    while (temp.length > C) {
+                        let tmp = temp.slice(0, C)
+                        temp = temp.slice(C)
+                        const str = tmp.reduce((s, v) => {
+                            s += PRINTJ.sprintf("0x%02x, ", v)
+                            return s
+                        }, '')
+                        console.log(str)
+                    }
+                    let str = temp.reduce((s, v) => {
+                        s += PRINTJ.sprintf("0x%02x, ", v)
+                        return s
+                    }, '')
+                    str=str.slice(0,-2)
+                    console.log(str)
+                    if (readLen >= L) {
+                        process.exit(0)
+                    } else {
+                        temp = []
+                    }
+                } else {
+                    while (temp.length > C) {
+                        let tmp = temp.slice(0, C)
+                        temp = temp.slice(C)
+                        const str = tmp.reduce((s, v) => {
+                            s += PRINTJ.sprintf("0x%02x, ", v)
+                            return s
+                        }, '')
+                        console.log(str)
+                    }
+                    let str = temp.reduce((s, v) => {
+                        s += PRINTJ.sprintf("0x%02x, ", v)
+                        return s
+                    }, '')
+                    temp = []
+                    str=str.slice(0,-2)
+                    console.log(str)
+                }
+                callback()
+            }
+        })
+        process.stdin.pipe(transform).pipe(process.stdout)
+    }
+    else if (P) {
+        if (O) {
+            console.warn('warning, option -o is ignored')
+        }
+        if (gFlag) {
+            console.warn('warning, option -g is ignored')
+        }
+        let temp = []
+        const transform = Transform({
+            transform(chunk, encoding, callback) {
+                let arr = Array.from(chunk)
+                if (arr.slice(-2)[0] === 0x0d) {
+                    arr.splice(-2, 1)
+                }
+                temp = arr.reduce((s, v) => {
+                    if (!L || L && readLen < L)
+                        s.push(v)
+                    readLen++
+                    return s
+                }, temp)
+                if (L) {
+                    while (temp.length >= C) {
+                        let tmp = temp.slice(0, C)
+                        temp = temp.slice(C)
+                        const str = tmp.reduce((s, v) => {
+                            s += PRINTJ.sprintf("%02x", v)
+                            return s
+                        }, '')
+                        console.log(str)
+                    }
+                    const str = temp.reduce((s, v) => {
+                        s += PRINTJ.sprintf("%02x", v)
+                        return s
+                    }, '')
+                    console.log(str)
+                    if (readLen >= L) {
+                        process.exit(0)
+                    } else {
+                        temp = []
+                    }
+                } else {
+                    while (temp.length >= C) {
+                        let tmp = temp.slice(0, C)
+                        temp = temp.slice(C)
+                        const str = tmp.reduce((s, v) => {
+                            s += PRINTJ.sprintf("%02x", v)
+                            return s
+                        }, '')
+                        console.log(str)
+                    }
+                    const str = temp.reduce((s, v) => {
+                        s += PRINTJ.sprintf("%02x", v)
+                        return s
+                    }, '')
+                    temp = []
+                    console.log(str)
+                }
+                callback()
+            }
+        })
+        process.stdin.pipe(transform).pipe(process.stdout)
     } else {
         const transform = Transform({
             transform(chunk, encoding, callback) {
@@ -194,8 +324,6 @@ if (infile) {
         })
         process.stdin.pipe(transform).pipe(process.stdout)
     }
-
-
 }
 // if (argv.length == 2) {
 //     let temp = []
